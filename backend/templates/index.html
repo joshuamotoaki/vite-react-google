@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <title>{{ app_name|default('App') }}</title>
+</head>
+
+<body>
+  <!-- Display a message to make clear the mode -->
+  {% if debug %}
+  <div
+    style="background-color: #f8d7da; color: #721c24; padding: 10px; margin: 10px; border: 1px solid #f5c6cb; border-radius: 4px;">
+    <strong>Info:</strong> Development mode is enabled.
+  </div>
+
+  {% else %}
+  <div
+    style="background-color: #d1ecf1; color: #0c5460; padding: 10px; margin: 10px; border: 1px solid #bee5eb; border-radius: 4px;">
+    <strong>Info:</strong> Production mode is enabled.
+  </div>
+  {% endif %}
+
+  <!-- Root div where React will mount the application -->
+  <div id="root"></div>
+
+  <!-- Conditional rendering based on debug mode -->
+  {% if debug %}
+  <!-- Import React Refresh Runtime for hot module replacement
+        This allows for real-time updates during development
+        without full page refreshes  -->
+  <script type="module">
+    import RefreshRuntime from 'http://localhost:3000/@react-refresh'
+    RefreshRuntime.injectIntoGlobalHook(window)
+    window.$RefreshReg$ = () => { }
+    window.$RefreshSig$ = () => (type) => type
+    window.__vite_plugin_react_preamble_installed__ = true
+  </script>
+
+  <!-- Import the main React entry point in development mode
+        Uses Vite's development server at port 3000
+        Dynamic path based on app_name variable from Flask -->
+  <script type="module" src="http://localhost:3000/src/{{ app_name }}/main.jsx"></script>
+  {% else %}
+
+  <!-- Import the built and bundled JavaScript file
+        Uses Flask's url_for helper to generate the correct URL
+        asset_path is set in app.py -->
+  <script type="module" src="{{ url_for('build', filename=asset_path) }}"></script>
+  {% endif %}
+</body>
+</html>
