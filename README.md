@@ -1,8 +1,8 @@
 # 1-Server Flask with React Frontend Example (Google Auth)
 
-This is a simple example of a Flask server with a React frontend with Vite.
-There is also OAuth2 Google Authentication.
-During production, only 1 server (the Flask server) is needed to serve both the frontend and backend. During development, there are 2 servers to enable hot module reloading for the frontend.
+This is a simple example of a Flask server with a React frontend with Vite. During production, only 1 server (the Flask server) is needed to serve both the frontend and backend. During development, there are 2 servers to enable hot module reloading for the frontend.
+
+This example uses **Google OAuth2 authentication**. If you would like to see an example with Princeton CAS, please see [this repository](https://github.com/joshuamotoaki/flask-vite-react). The only difference between the two repositories is the authentication method.
 
 ## Explanation
 
