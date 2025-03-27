@@ -1,133 +1,149 @@
+#!/usr/bin/env python
+
 # -----------------------------------------------------------------------
 # auth.py
-# Authors: Alex Halderman, Scott Karlin, Brian Kernighan, Bob Dondero,
-#          and Joshua Lau '26
+# Author: Bob Dondero
+#   With lots of help from https://realpython.com/flask-google-login/
 # -----------------------------------------------------------------------
 
-import urllib.request
-import urllib.parse
-import re
+import os
 import json
+import requests
 import flask
-import ssl
+import oauthlib.oauth2
+import dotenv
 
 # -----------------------------------------------------------------------
 
-_CAS_URL = "https://fed.princeton.edu/cas/"
+GOOGLE_DISCOVERY_URL = "https://accounts.google.com/.well-known/openid-configuration"
 
-# -----------------------------------------------------------------------
+dotenv.load_dotenv()
+GOOGLE_CLIENT_ID = os.environ["GOOGLE_CLIENT_ID"]
+GOOGLE_CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]
 
-
-# Return url after stripping out the "ticket" parameter that was
-# added by the CAS server.
-def strip_ticket(url):
-    if url is None:
-        return "something is badly wrong"
-    url = re.sub(r"ticket=[^&]*&?", "", url)
-    url = re.sub(r"\?&?$|&$", "", url)
-    return url
+client = oauthlib.oauth2.WebApplicationClient(GOOGLE_CLIENT_ID)
 
 
-# -----------------------------------------------------------------------
-
-
-# Validate a login ticket by contacting the CAS server. If
-# valid, return the user's user_info; otherwise, return None.
-def validate(ticket):
-    val_url = (
-        _CAS_URL
-        + "validate"
-        + "?service="
-        + urllib.parse.quote(strip_ticket(flask.request.url))
-        + "&ticket="
-        + urllib.parse.quote(ticket)
-        + "&format=json"
-    )
-    if flask.current_app.debug:
-        context = ssl._create_unverified_context()
-    else:
-        context = None
-
-    with urllib.request.urlopen(val_url, context=context) as flo:
-        result = json.loads(flo.read().decode("utf-8"))
-
-    if (not result) or ("serviceResponse" not in result):
-        return None
-
-    service_response = result["serviceResponse"]
-
-    if "authenticationSuccess" in service_response:
-        user_info = service_response["authenticationSuccess"]
-        return user_info
-
-    if "authenticationFailure" in service_response:
-        print("CAS authentication failure:", service_response)
-        return None
-
-    print("Unexpected CAS response:", service_response)
-    return None
-
-
-# -----------------------------------------------------------------------
-
-
-# Authenticate the user, and return the user's info.
-# Do not return unless the user is successfully authenticated.
 def authenticate():
-
-    # If the user_info is in the session, then the user was
-    # authenticated previously.  So return the username.
-    if "user_info" in flask.session:
-        user_info = flask.session.get("user_info")
-        return user_info["user"]
-
-    # If the request does not contain a login ticket, then redirect
-    # the browser to the login page to get one.
-    ticket = flask.request.args.get("ticket")
-    if ticket is None:
-        login_url = _CAS_URL + "login?service=" + urllib.parse.quote(flask.request.url)
-        flask.abort(flask.redirect(login_url))
-
-    # If the login ticket is invalid, then redirect the browser
-    # to the login page to get a new one.
-    user_info = validate(ticket)
-    if user_info is None:
-        login_url = (
-            _CAS_URL
-            + "login?service="
-            + urllib.parse.quote(strip_ticket(flask.request.url))
-        )
-        flask.abort(flask.redirect(login_url))
-
-    # The user is authenticated, so store the user_info in
-    # the session and return the username.
-    flask.session["user_info"] = user_info
-    clean_url = strip_ticket(flask.request.url)
-    flask.abort(flask.redirect(clean_url))
-
-
-# -----------------------------------------------------------------------
-
-
-def is_authenticated():
-    return "user_info" in flask.session
-
-
-# -----------------------------------------------------------------------
+    if "user_info" not in flask.session:
+        flask.abort(flask.redirect(flask.url_for("login")))
+    return flask.session.get("user_info")
 
 
 def init_auth(app):
+    @app.route("/login", methods=["GET"])
+    def login():
 
-    @app.route("/api/logoutcas", methods=["GET"])
-    def logoutcas():
-        logout_url = (
-            _CAS_URL
-            + "logout?service="
-            + urllib.parse.quote(re.sub("logoutcas", "logoutapp", flask.request.url))
+        # Determine the URL for Google login.
+        google_provider_cfg = requests.get(GOOGLE_DISCOVERY_URL, timeout=2).json()
+        authorization_endpoint = google_provider_cfg["authorization_endpoint"]
+
+        # Construct the request URL for Google login, providing scopes
+        # to fetch the user's profile data.
+        request_uri = client.prepare_request_uri(
+            authorization_endpoint,
+            redirect_uri=flask.request.base_url + "/callback",
+            scope=["openid", "email", "profile"],
         )
-        flask.abort(flask.redirect(logout_url))
 
-    @app.route("/api/logoutapp", methods=["GET"])
+        # -------------------------------------------------------------------
+        # For learning:
+        # print('request_uri:', request_uri, file=sys.stderr)
+        # -------------------------------------------------------------------
+
+        # Redirect to the request URL.
+        return flask.redirect(request_uri)
+
+    @app.route("/login/callback", methods=["GET"])
+    def callback():
+
+        # Get the authorization code that Google sent.
+        code = flask.request.args.get("code")
+
+        # -------------------------------------------------------------------
+        # For learning:
+        # print('code:', code, file=sys.stderr)
+        # -------------------------------------------------------------------
+
+        # Determine the URL to fetch tokens that allow the application to
+        # ask for the user's profile data.
+        google_provider_cfg = requests.get(GOOGLE_DISCOVERY_URL, timeout=2).json()
+        token_endpoint = google_provider_cfg["token_endpoint"]
+
+        # Construct a request to fetch the tokens.
+        token_url, headers, body = client.prepare_token_request(
+            token_endpoint,
+            authorization_response=flask.request.url,
+            redirect_url=flask.request.base_url,
+            code=code,
+        )
+
+        # -------------------------------------------------------------------
+        # For learning:
+        # print('token_url:', token_url, file=sys.stderr)
+        # print('headers:', headers, file=sys.stderr)
+        # print('body:', body, file=sys.stderr)
+        # -------------------------------------------------------------------
+
+        # Fetch the tokens.
+        token_response = requests.post(
+            token_url,
+            headers=headers,
+            data=body,
+            auth=(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET),
+            timeout=2,
+        )
+
+        # -------------------------------------------------------------------
+        # For learning:
+        # print('token_response.json():', token_response.json(),
+        #     file=sys.stderr)
+        # -------------------------------------------------------------------
+
+        # Parse the tokens.
+        client.parse_request_body_response(json.dumps(token_response.json()))
+
+        # Using the tokens, fetch the user's profile data,
+        # including the user's Google profile image and email address.
+        userinfo_endpoint = google_provider_cfg["userinfo_endpoint"]
+        uri, headers, body = client.add_token(userinfo_endpoint)
+
+        # -------------------------------------------------------------------
+        # For learning:
+        # print('uri:', uri, file=sys.stderr)
+        # print('headers:', headers, file=sys.stderr)
+        # print('body:', body, file=sys.stderr)
+        # -------------------------------------------------------------------
+
+        userinfo_response = requests.get(uri, headers=headers, data=body, timeout=2)
+
+        # -------------------------------------------------------------------
+        # For learning:
+        # print('userinfo_response.json():', userinfo_response.json(),
+        #     file=sys.stderr)
+        # -------------------------------------------------------------------
+
+        # Optional: Make sure the user's email address is verified.
+        if not userinfo_response.json().get("email_verified"):
+            message = "User email not available or not verified by Google."
+            return message, 400
+
+        # Save the user profile data in the session.
+        flask.session["user_info"] = userinfo_response.json()
+
+        return flask.redirect(flask.url_for("protected"))
+
+    @app.route("/logoutgoogle", methods=["GET"])
+    def logoutgoogle():
+        # Clear the session (logout) and then sign out of Google.
+        # This is not recommended as it is bad UX to sign the user
+        # out of Google when they logout of your app.
+        flask.session.clear()
+        flask.abort(flask.redirect("https://mail.google.com/mail/u/0/?logout&hl=en"))
+
+    @app.route("/logoutapp", methods=["GET"])
     def logoutapp():
+        # Clear the session (logout without signing out of Google)
+        # This is the recommended way to logout a user.
         flask.session.clear()
         return flask.redirect("/")
